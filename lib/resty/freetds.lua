@@ -3,6 +3,10 @@
 local ffi = require("ffi")
 local results = require("resty.freetds.result")
 
+
+local ffi_cast   = ffi.cast
+local ffi_new    = ffi.new
+
 local C = ffi.load(ffi.os == "Windows" and "sybdb" or "sybdb")
 
 ffi.cdef[[
@@ -26,7 +30,7 @@ ffi.cdef[[
     typedef uint32_t DBUINT;
     typedef uint64_t DBUBIGINT;
 
-    typedef struct 
+    typedef struct
     {
         DBSMALLINT len;
         char  str[256];
@@ -107,24 +111,24 @@ ffi.cdef[[
     { MAXCOLNAMELEN = 512 }; /* duplicates TDS_SYSNAME_SIZE */
     typedef enum { CI_REGULAR=1, CI_ALTERNATE=2, CI_CURSOR=3 } CI_TYPE;
 
-    typedef struct 
-    { 
-        DBINT SizeOfStruct; 
-        DBCHAR  Name[MAXCOLNAMELEN+2]; 
-        DBCHAR  ActualName[MAXCOLNAMELEN+2]; 
-        DBCHAR  TableName[MAXCOLNAMELEN+2]; 
-        SHORT Type; 
-        DBINT UserType; 
-        DBINT MaxLength; 
-        BYTE  Precision; 
-        BYTE  Scale; 
-        BOOL  VarLength; 
-        BYTE  Null; 
-        BYTE  CaseSensitive; 
-        BYTE  Updatable; 
-        BOOL  Identity; 
+    typedef struct
+    {
+        DBINT SizeOfStruct;
+        DBCHAR  Name[MAXCOLNAMELEN+2];
+        DBCHAR  ActualName[MAXCOLNAMELEN+2];
+        DBCHAR  TableName[MAXCOLNAMELEN+2];
+        SHORT Type;
+        DBINT UserType;
+        DBINT MaxLength;
+        BYTE  Precision;
+        BYTE  Scale;
+        BOOL  VarLength;
+        BYTE  Null;
+        BYTE  CaseSensitive;
+        BYTE  Updatable;
+        BOOL  Identity;
 
-    } DBCOL; 
+    } DBCOL;
 
     typedef struct
     {
@@ -202,8 +206,8 @@ ffi.cdef[[
           DBINT tzone;		/* 0 - 127  (Sybase only)  */
       };
 
-      typedef struct tds_microsoft_dbdaterec  DBDATEREC;
-      typedef struct tds_microsoft_dbdaterec2 DBDATEREC2;
+    typedef struct tds_microsoft_dbdaterec  DBDATEREC;
+    typedef struct tds_microsoft_dbdaterec2 DBDATEREC2;
 
     RETCODE dbinit(void);
 
@@ -297,7 +301,12 @@ ffi.cdef[[
     MHANDLEFUNC dbmsghandle(MHANDLEFUNC handler);
 ]];
 
+local ngx = ngx
+local ngx_log = ngx.log
+local ngx_DEBUG = ngx.DEBUG
+local ngx_WARN  = ngx.WARN
 
+local sfmt = string.format
 
 local ok, new_tab = pcall(require, "table.new")
 if not ok then
@@ -375,14 +384,15 @@ end
 --raise_error(DBPROCESS *dbproc, int is_message, int cancel, const char *error, const char *source, int severity, int dberr, int oserr)
 local function raise_error(dbproc, is_message, cancel, error, source, severity, dberr, oserr)
 
-    local client = ffi.cast("DBPROCESS *", dbproc)
-    local userdata = ffi.new("client_userdata *")
-    userdata = C.dbgetuserdata(client)
-    userdata = ffi.cast("client_userdata *", userdata)
-    local userdata_is_null = ffi.cast("void *", userdata) <= nil
+    local client = ffi_cast("DBPROCESS *", dbproc)
+    local userdata = ffi_new("client_userdata *")
+          userdata = C.dbgetuserdata(client)
+          userdata = ffi_cast("client_userdata *", userdata)
+
+    local userdata_is_null = ffi_cast("void *", userdata) <= nil
     if cancel and not C.dbdead(client) and not userdata_is_null and userdata.closed == 0 then
 
-        userdata.dbsqlok_sent = true
+        userdata.dbsqlok_sent  = true
         C.dbsqlok(client)
         userdata.dbcancel_sent = true
         C.dbcancel(client)
@@ -392,69 +402,66 @@ local function raise_error(dbproc, is_message, cancel, error, source, severity, 
 
         local message_handler = (not userdata_is_null and userdata.message_handler ) and userdata.message_handler or nil
         if message_handler and message_handler ~= nil then
-            ngx.log(ngx.DEBUG, "set callback function") 
+            ngx_log(ngx_DEBUG, "set callback function")
         end
         return nil
     end
 
-    error("source: " .. source ..
-          ",\n error: " .. error .. 
-          ",\n serverity: " .. severity .. 
-          ",\n db error no: " .. dberr .. 
-          ",\n os error no: " .. oserr )
-    
+    local err_string_format = "source: %s,\n error: %s,\n serverity: %d,\n db error no: %d,\n os error no: %d"
+    error(sfmt(err_string_format, source, error, severity, dberr, oserr))
+
     return nil
 end
 
---DBPROCESS *dbproc, int severity, int dberr, int oserr, char *dberrstr, char *oserrstr)  
+--DBPROCESS *dbproc, int severity, int dberr, int oserr, char *dberrstr, char *oserrstr)
 local function err_hander(dbproc, severity, dberr, oserr, dberrstr, oserrstr)
-        ngx.log(ngx.DEBUG, "===1")
+        ngx_log(ngx_DEBUG, "===1")
         local source = "error"
         local return_value =  2
         local cancel = false
-        local client = ffi.cast("DBPROCESS *", dbproc)
-        local userdata = ffi.new("client_userdata *")
-        userdata = C.dbgetuserdata(client)
-        userdata = ffi.cast("client_userdata *",userdata)
-    
-        local SYBEVERDOWN = 100
-        local SYBESEOF = 20017
-        local SYBESMSG = 20018
-        local SYBEICONVI =  2403
-    
-        local SYBEICONVO = 2402
-        local SYBETIME = 20003
-        local SYBEWRIT = 20006
-    
+        local client = ffi_cast("DBPROCESS *", dbproc)
+        local userdata = ffi_new("client_userdata *")
+              userdata = C.dbgetuserdata(client)
+              userdata = ffi_cast("client_userdata *",userdata)
+
+        local SYBEVERDOWN   = 100
+        local SYBESEOF      = 20017
+        local SYBESMSG      = 20018
+        local SYBEICONVI    = 2403
+
+        local SYBEICONVO    = 2402
+        local SYBETIME      = 20003
+        local SYBEWRIT      = 20006
+
         if (dberr == SYBEVERDOWN or dberr == SYBESEOF or
             dberr == SYBESMSG    or dberr == SYBEICONVI ) then
             return return_value
         end
-    
+
         if dberr == SYBEICONVO then
             C.dbfreebuf(client)
             return return_value
         end
-    
+
         if dberr == SYBETIME then
             return_value = 3 --INT_TIMEOUT
             cancel = true
         end
-    
+
+        local userdata_is_null = ffi_cast("void *", userdata) <= nil
         if dberr == SYBEWRIT then
-            local userdata_is_null = ffi.cast("void *", userdata) <= nil
             if ( not userdata_is_null and userdata.dbsqlok_sent == 1  or userdata.dbcancel_sent == 1 ) then
                 return return_value;
             end
             cancel = true
         end
-    
+
         if not userdata_is_null and userdata.nonblocking == 1 then
             if cancel and not C.dbdead(client) and userdata.closed == 0  then
                 C.dbcancel(client)
                 userdata.dbcancel_sent = true
             end
-    
+
             if userdata.nonblocking_error.is_set == 0 then
                 userdata.nonblocking_error.is_message = false
                 userdata.nonblocking_error.cancel = cancel
@@ -468,7 +475,7 @@ local function err_hander(dbproc, severity, dberr, oserr, dberrstr, oserrstr)
         else
             raise_error(dbproc, 0, cancel, dberrstr, source, severity, dberr, oserr)
         end
-    
+
         return return_value
     end
 
@@ -476,14 +483,14 @@ local function err_hander(dbproc, severity, dberr, oserr, dberrstr, oserrstr)
 local function msg_hander(dbproc, msgno, msgstate, severity, msgtext, srvname, procname, line)
     local source = "message"
 
-    local client = ffi.cast("DBPROCESS *", dbproc)
-    local userdata = ffi.new("client_userdata *")
+    local client = ffi_cast("DBPROCESS *", dbproc)
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
-     
+          userdata = ffi_cast("client_userdata *",userdata)
+
     local is_message_an_error = severity > 10 ;
-    local userdata_is_null = ffi.cast("void *", userdata) <= nil
-    if not userdata_is_null and 
+    local userdata_is_null = ffi_cast("void *", userdata) <= nil
+    if not userdata_is_null and
        userdata.nonblocking == 1 then
         if userdata.nonblocking_error.is_set == 0 then
             userdata.nonblocking_error.is_message = (not is_message_an_error)
@@ -515,18 +522,18 @@ function _M.new(self)
         return nil, "Cannot initialize freetds.  Do you have it installed - libfreetds?"
     end
 
-    local userdata = ffi.new("client_userdata");
+    local userdata = ffi_new("client_userdata");
 
-    userdata.closed = true;
+    userdata.closed     = true;
     userdata.timing_out = false;
     userdata.dbsql_sent = false;
-    userdata.dbsqlok_sent = false;
-    userdata.dbcancel_sent = false;
-    userdata.nonblocking = false;
+    userdata.dbsqlok_sent   = false;
+    userdata.dbcancel_sent  = false;
+    userdata.nonblocking    = false;
     userdata.nonblocking_error.is_set = false;
     userdata.message_handler = nil
     local cwrap = {
-        closed = true,
+        closed  = true,
         charset = nil,
         ffi     = ffi,
         is_compact_arrays = false,
@@ -543,6 +550,10 @@ function _M.set_keepalive(self, max_idle_timeout, pool_size)
 end
 
 function _M.get_reused_times(self)
+end
+
+local function c_bool_to_str(ret)
+    return ret == 1 and "success" or "failure"
 end
 
 --[[
@@ -565,49 +576,48 @@ mysql = {
 --]]
 function _M.connect(self, opts)
 
-    local cb_err = ffi.cast("EHANDLEFUNC",err_hander)
+    local cb_err = ffi_cast("EHANDLEFUNC",err_hander)
     self.cb_err = cb_err
     C.dberrhandle(cb_err)
 
-
-    local cb_msg = ffi.cast("MHANDLEFUNC",msg_hander)
+    local cb_msg = ffi_cast("MHANDLEFUNC",msg_hander)
     self.cb_msg = cb_msg
     C.dbmsghandle(cb_msg)
-    
-    local login = ffi.new("LOGINREC *")
+
+    local login = ffi_new("LOGINREC *")
 
     login = C.dblogin()
     self.login = login
     if opts.version then
         local version = _t_db_version[opts.version] or 5
         local ret = C.dbsetlversion(login, version)
-        ngx.log(ngx.DEBUG, "set version " , ret == 1 and "success" or "failure")
+        ngx_log(ngx_DEBUG, "set version " , c_bool_to_str(ret))
     end
 
     if opts.login_time then
         local login_time = opts.login_time or 15
         local ret = C.dbsetlogintime(login_time)
-        ngx.log(ngx.DEBUG, "set login time " , ret == 1 and "success" or "failure")
+        ngx_log(ngx_DEBUG, "set login time " , c_bool_to_str(ret))
     end
 
     local config = opts.connect_config
 
     if config.port then
-        config.host = config.host .. ":" .. tostring(config.port)
+        config.host = sfmt("%s:%d", config.host, config.port)
         config.port = nil
     end
 
     for k, v in pairs(config) do
         local ret = setup(k, v, login)
-        ngx.log(ngx.DEBUG, "set ",k ," ", ret == 1 and "success" or "failure", ", val: ", v)
+        ngx_log(ngx_DEBUG, "set ",k ," ", c_bool_to_str(ret), ", val: ", v)
     end
 
     local host = config.host
-    local client = ffi.new("DBPROCESS *")
+    local client = ffi_new("DBPROCESS *")
 
     client = C.dbopen(login, host)
 
-    if ffi.cast("void *", client) <= nil  then
+    if ffi_cast("void *", client) <= nil  then
         C.dbloginfree(login)
         cb_msg:free()
         cb_err:free()
@@ -616,39 +626,39 @@ function _M.connect(self, opts)
         return nil, "connect failure."
     end
 
-    self.client = client
-    self.closed = false;
+    self.client  = client
+    self.closed  = false;
     self.charset = config.charset;
 
     if opts.version then
         local version = _t_db_version[opts.version] or 5
-        local rec = C.dbsetversion(version)
-        ngx.log(ngx.DEBUG, "set version " , res == 1 and "success" or "failure",", val: ", version)        
+        local ret = C.dbsetversion(version)
+        ngx_log(ngx_DEBUG, "set version " , c_bool_to_str(ret),", val: ", version)
     end
 
     if opts.timeout then
         local str_timeout = tostring(opts.timeout)
         local res = C.dbsetopt(client, 34, str_timeout, 0)
-        ngx.log(ngx.DEBUG, "set timeout opt " , res == 1 and "success" or "failure")
+        ngx_log(ngx_DEBUG, "set timeout opt " , res == 1 and "success" or "failure")
         if res == 0 then
             local ret = C.dbsettime(opts.timeout)
-            ngx.log(ngx.DEBUG, "set time " , ret == 1 and "success" or "failure")
+            ngx_log(ngx_DEBUG, "set time " , c_bool_to_str(ret))
         end
     end
 
-    local byte_userdata = ffi.cast("BYTE *", self.userdata)
+    local byte_userdata = ffi_cast("BYTE *", self.userdata)
     C.dbsetuserdata(client, byte_userdata)
     self.userdata.closed = false
 
     if config.database and not opts.azure then
         local ret = C.dbuse(client, config.database)
-        ngx.log(ngx.DEBUG, "dbuse: ",config.database , " ",ret == 1 and "success" or "failure")
-        
+        ngx_log(ngx_DEBUG, "dbuse: ",config.database , " ",c_bool_to_str(ret))
+
     end
 
     self.encoding = config.charset
     local tds_ver = C.dbtds(client)
-    ngx.log(ngx.DEBUG, "get tds version = ", tds_ver)
+    ngx_log(ngx_DEBUG, "get tds version = ", tds_ver)
 
     if tds_ver <= 7 then
         self.identity_insert_sql =  "SELECT CAST(@@IDENTITY AS bigint) AS Ident";
@@ -667,7 +677,7 @@ function _M.close(self)
         self.client = nil
         self.closed = true
         self.userdata.closed = true;
-        
+
         self.cb_msg:free()
         self.cb_err:free()
         self.cb_msg = nil
@@ -678,7 +688,7 @@ function _M.close(self)
 end
 
 local function require_open_client(self)
-    if self.closed or self.userdata.closed == 1 then       
+    if self.closed or self.userdata.closed == 1 then
         error("closed connection" )
         return false
     end
@@ -686,7 +696,7 @@ local function require_open_client(self)
 end
 
 local function _reset_userdata(userdata)
-    
+
     userdata.timing_out = false
     userdata.dbsql_sent = false
     userdata.dbsqlok_sent = false
@@ -698,25 +708,25 @@ local function _reset_userdata(userdata)
 end
 
 local function _dbcancel(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
 
     C.dbcancel(client)
     userdata.dbcancel_sent = true
 end
 
 local function _setup(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
           userdata.nonblocking = true
 end
 
 local function _cleanup(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
           userdata.nonblocking = false
 
     if userdata.nonblocking_error.is_set == 1 then
@@ -733,9 +743,9 @@ local function _cleanup(client)
 end
 
 local function _dbsqlok(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
 
     _setup(client)
     local retcode = C.dbsqlok(client)
@@ -775,11 +785,11 @@ _M._dbnextrow = _dbnextrow
 
 
 local function db_sql_ok(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
 
-    if userdata.dbsqlok_sent  == 0 then 
+    if userdata.dbsqlok_sent  == 0 then
         userdata.dbsqlok_retcode = _dbsqlok(client)
     end
     return userdata.dbsqlok_retcode
@@ -787,9 +797,9 @@ end
 
 local function db_exec(client)
     local dbsqlok_rc = db_sql_ok(client)
-    local userdata = ffi.new("client_userdata *")
+    local userdata = ffi_new("client_userdata *")
           userdata = C.dbgetuserdata(client)
-          userdata = ffi.cast("client_userdata *",userdata)
+          userdata = ffi_cast("client_userdata *",userdata)
 
     if dbsqlok_rc == 1 then
         while(_dbresults(client) == 1) do
@@ -812,12 +822,12 @@ function _M.send_query(self, query)
     require_open_client(self)
 
     local ret = C.dbcmd(client, query)
-    ngx.log(ngx.DEBUG, "dbcmd() " , ret == 1 and "success" or "failure")
-        
+    ngx_log(ngx_DEBUG, "dbcmd() " , c_bool_to_str(ret))
+
 
     if C.dbsqlsend(client) == 0 then
         local err = "dbsqlsend() returned FAIL.\n"
-        ngx.log(ngx.log.WARN, err)
+        ngx_log(ngx_WARN, err)
         return false, err
     end
 
@@ -826,12 +836,12 @@ function _M.send_query(self, query)
 end
 
 function _M.read_result(self, opts)
-    
+
     local result = results:new(self)
     result.encoding = self.encoding
 
     local rows, fields = result:each(opts)
-    ngx.log(ngx.DEBUG, "read data of rows: ", #rows,  ", of fields: ", #fields ,".")
+    ngx_log(ngx_DEBUG, "read data of rows: ", #rows,  ", of fields: ", #fields ,".")
     return rows, fields
 end
 
@@ -842,7 +852,7 @@ function _M.query(self, query, opts)
     if not send_flag then
         return nil , err
     end
-    
+
     return self:read_result(opts)
 end
 
@@ -856,6 +866,7 @@ end
 
 function _M.set_compact_arrays(flag)
     self.is_compact_arrays = flag
+    return true
 end
 
 function _M.encoding(self)
@@ -864,9 +875,9 @@ end
 
 function _M.charset(self)
     return self.charset
-end 
+end
 
-function _M.sqlsent(self) 
+function _M.sqlsent(self)
     return self.userdata.dbsql_sent
 end
 
