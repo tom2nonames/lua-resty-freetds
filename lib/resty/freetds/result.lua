@@ -1,3 +1,4 @@
+local cjson = require "cjson"
 local bit = require("bit")
 local blshift= bit.lshift
 local bbor   = bit.bor
@@ -139,7 +140,7 @@ function _M.fetch_row(self, timezone, symbolize_keys, as_array )
         return val == 1 and true or false
     end
 
-    case[db_type.SYBNUMERIC] = function(data, data_len, col_type)
+    case[db_type.SYBNUMERIC] = function(data, data_len, col_type, col)
         local data_info = ffi_new("DBTYPEINFO *")
         data_info = C.dbcoltypeinfo(client, col)
 
@@ -149,7 +150,7 @@ function _M.fetch_row(self, timezone, symbolize_keys, as_array )
         converted_decimal = ffi_cast("BYTE *", converted_decimal)
         C.dbconvert(client, col_type, data, data_len, db_type.SYBVARCHAR, converted_decimal, -1)
         converted_decimal = ffi_cast("char *", converted_decimal)
-        return ffi_string(converted_decimal, data_slength)
+        return ffi_string(converted_decimal)
     end
 
     case[db_type.SYBDECIMAL] = case[db_type.SYBNUMERIC]
@@ -188,7 +189,7 @@ function _M.fetch_row(self, timezone, symbolize_keys, as_array )
 
     --SYBUNIQUE
     case[36] = function(data, data_len, col_type)
-        local converted_unique = ffi_new("char[?]",25)
+        local converted_unique = ffi_new("char[?]",37)
         converted_unique = ffi_cast("BYTE *", converted_unique)
         C.dbconvert(client, col_type, data, 37, db_type.SYBVARCHAR, converted_unique, -1)
         return ffi_string(converted_unique)
@@ -199,7 +200,7 @@ function _M.fetch_row(self, timezone, symbolize_keys, as_array )
         local new_data = ffi_new("DBDATETIME")
         local size =  ffi_sizeof(new_data)
         new_data = ffi_cast("BYTE *", new_data)
-        C.dbconvert(client, col_type, data, 37, db_type.SYBDATETIME, new_data, size)
+        C.dbconvert(client, col_type, data, data_len, db_type.SYBDATETIME, new_data, size)
         data  = new_data
         data_len = size
         local dr = ffi_new("DBDATEREC")
@@ -326,7 +327,7 @@ function _M.fetch_row(self, timezone, symbolize_keys, as_array )
                 val = ffi_string(data, data_len)
             end
 
-            val = func(data, data_len, col_type)
+            val = func(data, data_len, col_type, col)
         end
 
         if as_array then
@@ -374,11 +375,11 @@ function _M.getfields(self)
                 self.fields = fields
             elseif self.number_of_results == 1 then
                 local multi_rs_fields = {}
-                multi_rs_fields[0] = self.fields
-                multi_rs_fields[1] = fields
+                multi_rs_fields[1] = self.fields
+                multi_rs_fields[2] = fields
                 self.fields = multi_rs_fields
             else
-                self.fields[self.number_of_results] = fields
+                self.fields[self.number_of_results+1] = fields
             end
         end
 
@@ -461,11 +462,11 @@ function _M.each(self, opts)
                         self.results = result
                     elseif self.number_of_results == 1 then
                         local multi_resultsets = {}
-                        multi_resultsets[0] = self.results
-                        multi_resultsets[1] = result
+                        multi_resultsets[1] = self.results
+                        multi_resultsets[2] = result
                         self.results = multi_resultsets
                     else
-                        self.results[self.number_of_results] = result
+                        self.results[self.number_of_results+1] = result
                     end
                 end
 

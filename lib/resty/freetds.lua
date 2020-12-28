@@ -11,6 +11,8 @@ local C = ffi.load(ffi.os == "Windows" and "sybdb" or "sybdb")
 
 ffi.cdef[[
 
+    int sprintf(char *buf, const char *fmt, ...);
+
     typedef int BOOL;
     typedef short SHORT;
 
@@ -244,6 +246,8 @@ ffi.cdef[[
     char *dbcolname(DBPROCESS * dbproc, int column);
 
     int dbcoltype(DBPROCESS * dbproc, int column);
+
+    DBTYPEINFO *dbcoltypeinfo(DBPROCESS * dbproc, int column);
 
     DBINT dbcollen(DBPROCESS * dbproc, int column);
 
