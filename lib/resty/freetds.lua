@@ -6,6 +6,8 @@ local results = require("resty.freetds.result")
 
 local ffi_cast   = ffi.cast
 local ffi_new    = ffi.new
+local ffi_copy   = ffi.copy
+local ffi_string = ffi.string
 
 local C = ffi.load(ffi.os == "Windows" and "sybdb" or "sybdb")
 
@@ -386,7 +388,7 @@ local function setup(name, value, login)
     return nil, "No matching settings were found. item: " .. name
 end
 --raise_error(DBPROCESS *dbproc, int is_message, int cancel, const char *error, const char *source, int severity, int dberr, int oserr)
-local function raise_error(dbproc, is_message, cancel, error, source, severity, dberr, oserr)
+local function raise_error(dbproc, is_message, cancel, error_str, source_str, severity, dberr, oserr)
 
     local client = ffi_cast("DBPROCESS *", dbproc)
     local userdata = ffi_new("client_userdata *")
@@ -411,8 +413,10 @@ local function raise_error(dbproc, is_message, cancel, error, source, severity, 
         return nil
     end
 
-    local err_string_format = "source: %s,\n error: %s,\n serverity: %d,\n db error no: %d,\n os error no: %d"
-    error(sfmt(err_string_format, source, error, severity, dberr, oserr))
+    local err_string_format = "source: %s, error: %s,\n serverity: %d, db err no: %d, os err no: %d"
+    local msg = sfmt(err_string_format, ffi_string(source_str), ffi_string(error_str), severity, dberr, oserr)
+
+    error(msg)
 
     return nil
 end
@@ -469,11 +473,13 @@ local function err_hander(dbproc, severity, dberr, oserr, dberrstr, oserrstr)
             if userdata.nonblocking_error.is_set == 0 then
                 userdata.nonblocking_error.is_message = false
                 userdata.nonblocking_error.cancel = cancel
-                userdata.nonblocking_error.error = dberrstr
+                local error_str = ffi_string(dberrstr)
+                ffi_copy(userdata.nonblocking_error.error, error_str, #error_str)
+
                 userdata.nonblocking_error.source = source
                 userdata.nonblocking_error.severity = severity
-                userdata.nonblocking_error.dberr = dberr
-                userdata.nonblocking_error.oserr=oserr
+                userdata.nonblocking_error.dberr  = dberr
+                userdata.nonblocking_error.oserr  = oserr
                 userdata.nonblocking_error.is_set = true
             end
         else
@@ -499,11 +505,12 @@ local function msg_hander(dbproc, msgno, msgstate, severity, msgtext, srvname, p
         if userdata.nonblocking_error.is_set == 0 then
             userdata.nonblocking_error.is_message = (not is_message_an_error)
             userdata.nonblocking_error.cancel = is_message_an_error
-            userdata.nonblocking_error.error = msgtext
+            local error_str = ffi_string(msgtext)
+            ffi_copy(userdata.nonblocking_error.error, error_str, #error_str)
             userdata.nonblocking_error.source = source
             userdata.nonblocking_error.severity = severity
-            userdata.nonblocking_error.dberr = msgno
-            userdata.nonblocking_error.oserr=msgstate
+            userdata.nonblocking_error.dberr  = msgno
+            userdata.nonblocking_error.oserr  = msgstate
             userdata.nonblocking_error.is_set = true
         end
 
