@@ -97,7 +97,7 @@ function _M.new(self, cwrap)
     return setmetatable(wrapper, mt)
 end
 
-function _M.return_code(self)
+function _M.dbresults_retcode(self)
 
     local ret = nil
     ret = self.dbresults_retcodes[self.number_of_results]
@@ -351,12 +351,12 @@ end
 function _M.getfields(self)
     local client = self.client
     local dbsqlok_rc   = self.cwrap.db_sql_ok(client)
-    local dbresults_rc = self:return_code()
+    local dbresults_rc = self:dbresults_retcode()
 
     local fields_processed = self.fields_processed[self.number_of_results]
 
     if dbsqlok_rc == 1 and dbresults_rc == 1 and fields_processed == nil then
-        local symbolize_keys = self.opts.symbolize_keys
+        local symbolize_keys = self.opts.symbolize_keys or 0
 
         self.number_of_fields = C.dbnumcols(client)
         ngx_log(ngx_DEBUG, " number of fileds: ", self.number_of_fields)
@@ -383,7 +383,7 @@ function _M.getfields(self)
             end
         end
 
-        self.fields_processed[self.number_of_results] = true
+        self.fields_processed[self.number_of_results+1] = true
     end
 
     return self.fields
@@ -412,7 +412,7 @@ function _M.each(self, opts)
 
     local first , symbolize_keys , as_array , cache_rows , timezone, empty_sets
         = self.opts.first, self.opts.symbolize_keys, self.opts.as_array or cwrap.is_compact_arrays,
-          self.opts.cache_rows, self.opts.timezone, self.opts.empty_sets
+          self.opts.cache_rows, self.opts.timezone, self.opts.empty_sets or 0
 
     ngx_log(ngx_DEBUG, "opts: first = " , first ,
                        ", symbolize_keys = ", symbolize_keys,
@@ -427,7 +427,7 @@ function _M.each(self, opts)
 
     if not self.results then
         local dbsqlok_rc   = self.cwrap.db_sql_ok(client)
-        local dbresults_rc = self:return_code()
+        local dbresults_rc = self:dbresults_retcode()
         ngx_log(ngx_DEBUG, "db_sql_ok:  " , dbsqlok_rc , ", db results:", dbresults_rc)
         self.results = {}
 
@@ -471,7 +471,7 @@ function _M.each(self, opts)
                 end
 
                 self.number_of_results = self.number_of_results + 1
-                dbresults_rc = self:return_code()
+                dbresults_rc = self:dbresults_retcode()
                 self.fields_processed[self.number_of_results] = nil
             else
                 dbresults_rc = cwrap.db_sql_ok(client)
@@ -502,6 +502,7 @@ function _M.cancel(self)
     return true
 end
 
+--do
 function _M.exec(self)
     local client = self.client
     if client then
@@ -522,28 +523,41 @@ function _M.affected_row(self)
     end
 end
 
+function _M.return_code(self)
+    if self.client and C.dbhasretstat(self.client) then
+        return C.dbretstatus(self.client)
+    end
+    return nil
+end
+
 function _M.insert(self)
     local client = self.client
     local cwrap = self.cwrap
     local identity
     if client then
         cwrap.db_exec(client)
+        ngx_log(ngx.DEBUG, "identity_insert_sql: ", cwrap.identity_insert_sql)
         C.dbcmd(client, cwrap.identity_insert_sql)
         if cwrap._dbsqlexec(client) ~= 0 and
            cwrap._dbresults(client) ~= 0 and
            C.dbrows(client) ~= 0 then
+            ngx_log(ngx.DEBUG, "sqlexec ok, results ok, dbrows ok ")
             while( cwrap._dbnextrow(client) ~= -2 ) do
+                ngx_log(ngx.DEBUG, "while .. ")
                 local col = 1
                 local data = ffi_new("BYTE *")
                       data = C.dbdata(client, col)
                 local data_len = C.dbdatlen(client, col)
 
                 local null_val = data == nil and data_len == 0
+                ngx_log(ngx.DEBUG, "data: ", data == nil , ", data len: ", data_len)
                 if not null_val then
+                    ngx_log(ngx.DEBUG, "not null val .. ")
                     identity = ffi_cast("DBBITINT *", data)
                     identity = identity[0]
                 end
             end
+            ngx_log(ngx.DEBUG, "get identity: ", identity)
         end
         return identity
     else

@@ -9,6 +9,8 @@ local ffi_new    = ffi.new
 local ffi_copy   = ffi.copy
 local ffi_string = ffi.string
 
+local t_insert = table.insert
+
 local C = ffi.load(ffi.os == "Windows" and "sybdb" or "sybdb")
 
 ffi.cdef[[
@@ -269,6 +271,8 @@ ffi.cdef[[
 
     STATUS dbnextrow(DBPROCESS * dbproc);
 
+    RETCODE dbsqlexec(DBPROCESS * dbproc);
+
     RETCODE dbsqlok(DBPROCESS * dbproc);
 
     RETCODE dbsqlsend(DBPROCESS * dbproc);
@@ -297,6 +301,8 @@ ffi.cdef[[
     RETCODE dbdatecrack(DBPROCESS * dbproc, DBDATEREC * di, DBDATETIME * dt);
 
     DBINT dbconvert(DBPROCESS * dbproc, int srctype, const BYTE * src, DBINT srclen, int desttype, BYTE * dest, DBINT destlen);
+
+    DBINT dbcount(DBPROCESS * dbproc);
 
     typedef int (*EHANDLEFUNC) (DBPROCESS * dbproc, int severity, int dberr, int oserr, char *dberrstr, char *oserrstr);
 
@@ -826,6 +832,7 @@ end
 _M.db_sql_ok= db_sql_ok
 _M.db_exec  = db_exec
 
+
 function _M.send_query(self, query)
     self.userdata = _reset_userdata(self.userdata)
     local client = self.client
@@ -856,6 +863,37 @@ function _M.read_result(self, opts)
     return rows, fields
 end
 
+function _M.do_result(self, opts)
+    local result = results:new(self)
+    result.encoding = self.encoding
+    return { affected_rows = result:exec() }
+ end
+
+ function _M.insert_result(self, opts)
+    local result = results:new(self)
+    result.encoding = self.encoding
+    return {
+            affected_rows = result:exec(),
+            id = result:insert()
+           }
+ end
+
+local function split(str, delimiter)
+    if str == nil or str == '' or delimiter == nil then
+        return nil
+    end
+
+    local result = {}
+    local str1      =  str .. delimiter
+    local regex_str = "(.-)" .. delimiter
+
+    for match in str1:gmatch(regex_str) do
+        t_insert(result, match)
+    end
+
+    return result
+end
+
 function _M.query(self, query, opts)
 
     local send_flag, err = self:send_query(query)
@@ -864,7 +902,25 @@ function _M.query(self, query, opts)
         return nil , err
     end
 
-    return self:read_result(opts)
+    local t = split(query, " ")
+    local key = string.lower(t[1])
+    local fun_t = {
+        select = self.read_result,
+        insert = self.insert_result,
+        delete = self.do_result,
+        update = self.do_result,
+        exec   = function(self, opts)
+                    local result = results:new(self)
+                    result.encoding = self.encoding
+                    result:exec()
+                    return { return_code = self.return_code() }
+                 end
+
+    }
+    ngx_log(ngx.DEBUG, "query sql is " .. key)
+
+    local fun = fun_t[key] or self.do_result
+    return fun(self, opts)
 end
 
 function _M.server_ver(self)
@@ -903,5 +959,22 @@ end
 function _M.dead(self)
     return C.dbdead(self.client) == 1 and true or false;
 end
+
+function _M.escape(self, txt)
+
+end
+
+function _M.return_code(self)
+    if self.client and C.dbhasretstat(self.client) then
+        return C.dbretstatus(self.client)
+    end
+    return nil
+end
+
+function _M.identity_sql(self)
+    return self.identity_insert_sql
+end
+
+
 
 return _M
